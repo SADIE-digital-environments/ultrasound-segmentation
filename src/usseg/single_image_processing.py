@@ -67,82 +67,125 @@ def data_from_image(pil_img, cv2_img):
         segmentation_mask, Xmin, Xmax, Ymin, Ymax
     )
 
-    # Search for ticks and labels
-    (
-        Cs,
-        ROIAX,
-        CenPoints,
-        onY,
-        BCs,
-        TYLshift,
-        thresholded_image,
-        Side,
-        Left_dimensions,
-        Right_dimensions,
-        ROI2,
-        ROI3,
-    ) = general_functions.search_for_ticks(
-        cv2_img, "Left", Left_dimensions, Right_dimensions
-    )
-    ROIAX, Lnumber, Lpositions, ROIL = general_functions.search_for_labels(
-        Cs,
-        ROIAX,
-        CenPoints,
-        onY,
-        BCs,
-        TYLshift,
-        Side,
-        Left_dimensions,
-        Right_dimensions,
-        cv2_img,
-        ROI2,
-        ROI3,
-    )
+    # Initialise axis containers so the functions can pass if one side fails.
+    Lnumber = None
+    Lpositions = None
+    Rnumber = None
+    Rpositions = None
 
-    (
-        Cs,
-        ROIAX,
-        CenPoints,
-        onY,
-        BCs,
-        TYLshift,
-        thresholded_image,
-        Side,
-        Left_dimensions,
-        Right_dimensions,
-        ROI2,
-        ROI3,
-    ) = general_functions.search_for_ticks(
-        cv2_img, "Right", Left_dimensions, Right_dimensions
-    )
-    ROIAX, Rnumber, Rpositions, ROIR = general_functions.search_for_labels(
-        Cs,
-        ROIAX,
-        CenPoints,
-        onY,
-        BCs,
-        TYLshift,
-        Side,
-        Left_dimensions,
-        Right_dimensions,
-        cv2_img,
-        ROI2,
-        ROI3,
-    )
+    # Search for ticks and labels - Left axis
+    try:
+        (
+            Cs,
+            ROIAX,
+            CenPoints,
+            onY,
+            BCs,
+            TYLshift,
+            thresholded_image,
+            Side,
+            Left_dimensions,
+            Right_dimensions,
+            ROI2,
+            ROI3,
+        ) = general_functions.search_for_ticks(
+            cv2_img, "Left", Left_dimensions, Right_dimensions
+        )
+        ROIAX, Lnumber, Lpositions, ROIL = general_functions.search_for_labels(
+            Cs,
+            ROIAX,
+            CenPoints,
+            onY,
+            BCs,
+            TYLshift,
+            Side,
+            Left_dimensions,
+            Right_dimensions,
+            cv2_img,
+            ROI2,
+            ROI3,
+        )
+        # Validate and clean left-axis ticks/labels
+        Lnumber, Lpositions = general_functions.validate_axis_ticks(
+            Lnumber, Lpositions, side="Left"
+        )
+    except Exception:
+        logger.exception("Single-image: failed Left axes search")
 
+    # Search for ticks and labels - Right axis
+    try:
+        (
+            Cs,
+            ROIAX,
+            CenPoints,
+            onY,
+            BCs,
+            TYLshift,
+            thresholded_image,
+            Side,
+            Left_dimensions,
+            Right_dimensions,
+            ROI2,
+            ROI3,
+        ) = general_functions.search_for_ticks(
+            cv2_img, "Right", Left_dimensions, Right_dimensions
+        )
+        ROIAX, Rnumber, Rpositions, ROIR = general_functions.search_for_labels(
+            Cs,
+            ROIAX,
+            CenPoints,
+            onY,
+            BCs,
+            TYLshift,
+            Side,
+            Left_dimensions,
+            Right_dimensions,
+            cv2_img,
+            ROI2,
+            ROI3,
+        )
+        # Validate and clean right-axis ticks/labels
+        Rnumber, Rpositions = general_functions.validate_axis_ticks(
+            Rnumber, Rpositions, side="Right"
+        )
+    except Exception:
+        logger.exception("Single-image: failed Right axes search")
+
+    # Estimate a global y=0 line (in image coordinates) using whichever sides
+    # are available.
+    try:
+        y_zero = general_functions.estimate_zero_line_y(
+            left_numbers=Lnumber,
+            left_positions=Lpositions,
+            right_numbers=Rnumber,
+            right_positions=Rpositions,
+        )
+        if y_zero is not None:
+            logger.info(f"Single-image: estimated y=0 line at y={y_zero:.2f}")
+    except Exception:
+        logger.exception("Single-image: zero-line estimation failed")
+        y_zero = None
+
+    # Refine segmentation and compute top curve, passing estimated zero-line when available.
     (
-        refined_segmentation_mask, top_curve_mask, top_curve_coords
+        refined_segmentation_mask,
+        top_curve_mask,
+        top_curve_coords,
     ) = general_functions.segment_refinement(
-        cv2_img, Xmin, Xmax, Ymin, Ymax
+        cv2_img, Xmin, Xmax, Ymin, Ymax, y_zero=y_zero
     )
 
-    # Gets the segmentation
-    Xplot, Yplot, Ynought = general_functions.plot_digitized_data(
+    # Digitise using the single-axis digitisation routine.
+    Xplot, Yplot, Ynought = general_functions.plot_digitized_data_single_axis(
         Rnumber, Rpositions, Lnumber, Lpositions, top_curve_coords,
     )
 
+    # Apply text-based corrections if text extraction succeeded.
     if not text_extract_failed:
-        df = general_functions.plot_correction(Xplot, Yplot, df)
+        try:
+            df = general_functions.plot_correction(Xplot, Yplot, df)
+        except Exception:
+            logger.exception("Single-image: plot_correction failed")
 
     plt.close("all")
     XYdata = [Xplot, Yplot]

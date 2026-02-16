@@ -21,7 +21,7 @@ def check_file_for_us(file_path):
     Returns:
         A tuple of (patient_id, file_path) if the file is a likely ultrasound, or `None` otherwise.
     """
-    if file_path.endswith('.JPG'):
+    if file_path.lower().endswith(('.jpg', '.png')):
         try:
             Fail, df = general_functions.scan_type_test(file_path)
             if Fail == 0:
@@ -51,8 +51,8 @@ def get_likely_us(root_dir, pickle_path=None, use_parallel=True):
 
     # Check if the root_dir is a directory or a single file
     if os.path.isdir(root_dir):
-        # Collect all JPG files from the root directory
-        all_files = [os.path.join(subdir, file) for subdir, _, files in os.walk(root_dir) for file in files if file.endswith('.JPG')]
+        # Collect all JPG and PNG files from the root directory
+        all_files = [os.path.join(subdir, file) for subdir, _, files in os.walk(root_dir) for file in files if file.endswith(('.JPG', '.jpg', '.PNG', '.png'))]
 
         if use_parallel:
             # Using ThreadPoolExecutor to parallelize the file processing

@@ -124,7 +124,7 @@ def initial_segmentation(input_image_obj):
                 pixel_data[x, y] = (0, 0, 0)  # If conditions not met, set to black/
 
             if img_RGB.size[1] > 600:
-                if y < 400:  # for some reason x==0 is white, this line negates this.
+                if y < 500:  # for some reason x==0 is white, this line negates this.
                     pixel_data[x, y] = (0, 0, 0)
             else:
                 if y < 20:
@@ -208,7 +208,7 @@ def define_end_rois(segmentation_mask, Xmin, Xmax, Ymin, Ymax):
         Ymin_L = 1
     Ymax_L = Ylim
     Left_dimensions = [Xmin_L, Xmax_L, Ymin_L, Ymax_L]
-    # # RHS
+    # RHS
     Xmin_R = Xmax
     Xmax_R = Xlim  # Xmax + 50
     if (Ymin - 125) > 0:
@@ -216,10 +216,8 @@ def define_end_rois(segmentation_mask, Xmin, Xmax, Ymin, Ymax):
     else:
         Ymin_R = 1
 
-    if (Ylim - 70) > 0:
-        Ymax_R = Ylim - 70
-    else:
-        Ymax_R = Ylim
+    # Make right ROI extend to the same bottom limit as the left ROI
+    Ymax_R = Ylim
 
     Right_dimensions = [Xmin_R, Xmax_R, Ymin_R, Ymax_R]
     return Left_dimensions, Right_dimensions
@@ -245,7 +243,7 @@ def check_inverted_curve(top_curve_mask, Ymax, Ymin, tol=.25):
     return c_range / (Ymax - Ymin) < tol
 
 
-def segment_refinement(input_image_obj, Xmin, Xmax, Ymin, Ymax):
+def segment_refinement(input_image_obj, Xmin, Xmax, Ymin, Ymax, y_zero=None):
     """
     Refines the segmentation of a waveform within specified bounds, improving 
     the separation between the waveform and background. It processes a given 
@@ -257,18 +255,42 @@ def segment_refinement(input_image_obj, Xmin, Xmax, Ymin, Ymax):
             using a library such as OpenCV.
         Xmin (float): Minimum X coordinate of the segmentation in pixels, 
             defining the left boundary of the ROI.
-        Xmax (float): Maximum X coordinate of the segmentation in pixels, 
+        Xmax (float): Maximum X coordinate of the segmentation in pixels,
             defining the right boundary of the ROI.
-        Ymin (float): Minimum Y coordinate of the segmentation in pixels, 
+        Ymin (float): Minimum Y coordinate of the segmentation in pixels,
             defining the bottom boundary of the ROI.
-        Ymax (float): Maximum Y coordinate of the segmentation in pixels, 
+        Ymax (float): Maximum Y coordinate of the segmentation in pixels,
             defining the top boundary of the ROI.
+        y_zero (float, optional): Estimated y-coordinate of the physical 0-line
+            in image pixels. Currently unused, but accepted for future use.
 
     Returns:
         (tuple) : tuple containing:
             - **refined_segmentation_mask** (ndarray): A binary array mask showing the refined segmentation of the waveform (value 1) against the background (value 0).
             - **top_curve_mask** (ndarray): A binary array representing a curve along the top of the refined waveform segmentation.
             - **top_curve_coords** (ndarray): An array of coordinates (row, column) for the top curve of the waveform.
+    """
+
+    # 1) Produce the refined binary segmentation mask
+    refined_segmentation_mask = refine_waveform_segmentation(
+        input_image_obj, Xmin, Xmax, Ymin, Ymax
+    )
+
+    # 2) From that mask, derive the top-curve representation
+    top_curve_mask, top_curve_coords = compute_top_curve(
+        refined_segmentation_mask, Ymin, Ymax, y_zero=y_zero
+    )
+
+    return refined_segmentation_mask, top_curve_mask, top_curve_coords
+
+
+def refine_waveform_segmentation(input_image_obj, Xmin, Xmax, Ymin, Ymax):
+    """
+    Core segmentation routine used by ``segment_refinement``.
+
+    This function performs the image thresholding and all morphological
+    operations required to obtain the final refined binary mask of the
+    waveform region. It does **not** compute the top-curve.
     """
 
     # Refine segmentation to increase smoothing
@@ -289,18 +311,24 @@ def segment_refinement(input_image_obj, Xmin, Xmax, Ymin, Ymax):
     refined_segmentation_mask = morphology.remove_small_objects(
         nonzero_pixels, 200, connectivity=2
     )  # Remover small objects (noise)
-    refined_segmentation_mask = morphology.remove_small_holes(refined_segmentation_mask, 200)  # Fill in any small holes
+    refined_segmentation_mask = morphology.remove_small_holes(
+        refined_segmentation_mask, 200
+    )  # Fill in any small holes
     refined_segmentation_mask = morphology.binary_erosion(
         refined_segmentation_mask
     )  # Erode the remaining binary, this can remove any ticks that may be joined to the main body
-    refined_segmentation_mask = morphology.binary_erosion(refined_segmentation_mask)  # Same as above - combine to one line if possible
+    refined_segmentation_mask = morphology.binary_erosion(
+        refined_segmentation_mask
+    )  # Same as above - combine to one line if possible
     refined_segmentation_mask = morphology.binary_dilation(
         refined_segmentation_mask
     )  # Dilate to try and recover some of the collateral loss through erosion
     refined_segmentation_mask = refined_segmentation_mask.astype(float)  # Change type
 
     refined_segmentation_mask = morphology.binary_dilation(refined_segmentation_mask)
-    refined_segmentation_mask = morphology.remove_small_holes(refined_segmentation_mask, 1000)
+    refined_segmentation_mask = morphology.remove_small_holes(
+        refined_segmentation_mask, 1000
+    )
     refined_segmentation_mask = morphology.closing(refined_segmentation_mask)
     refined_segmentation_mask = refined_segmentation_mask.astype(int)
     refined_segmentation_mask = scipy.signal.medfilt(refined_segmentation_mask, 3)
@@ -311,12 +339,13 @@ def segment_refinement(input_image_obj, Xmin, Xmax, Ymin, Ymax):
     rp = measure.regionprops(labelled)
 
     # get size of largest cluster
-
     sizes = sorted([i.area for i in rp])
     refined_segmentation_mask = refined_segmentation_mask.astype(bool)
     # remove everything smaller than largest
     try:
-        refined_segmentation_mask = morphology.remove_small_objects(refined_segmentation_mask, min_size=sizes[-2] + 10)
+        refined_segmentation_mask = morphology.remove_small_objects(
+            refined_segmentation_mask, min_size=sizes[-2] + 10
+        )
     except Exception:
         pass
     refined_segmentation_mask = refined_segmentation_mask.astype(float)
@@ -324,24 +353,90 @@ def segment_refinement(input_image_obj, Xmin, Xmax, Ymin, Ymax):
 
     blurred = gaussian_filter(refined_segmentation_mask, sigma=7)
     refined_segmentation_mask = (blurred > 0.5) * 1
-    labelled = measure.label(refined_segmentation_mask)
+
+    return refined_segmentation_mask
+
+
+def compute_top_curve(refined_segmentation_mask, Ymin, Ymax, y_zero=None):
+    """
+    Given a refined segmentation mask, compute the top-curve representation.
+
+    This function reads the supplied mask (without mutating it) and derives:
+      - ``top_curve_mask``: a thin mask along the top of the waveform.
+      - ``top_curve_coords``: the (row, column) coordinates of that curve.
+    """
+    # Work on a copy to avoid mutating the original refined_segmentation_mask
+    mask = refined_segmentation_mask.copy()
+
+    # label and calculate parameters for every cluster in mask
+    labelled = measure.label(mask)
     rp = measure.regionprops(labelled)
 
-    ws = morphology.binary_erosion(refined_segmentation_mask)
-    ws = ws.astype(float)
-    top_curve_mask = refined_segmentation_mask - ws
-    for x in range(int(rp[0].centroid[0]), top_curve_mask.shape[0]):
-        top_curve_mask[x, :] = 0
+    ws = morphology.binary_erosion(mask).astype(float)
+    top_curve_mask = mask - ws
 
-    # Checks if waveforms are inverted, if so gets the bottom of the curve
-    if check_inverted_curve(top_curve_mask, Ymax, Ymin):
-        top_curve_mask = refined_segmentation_mask - ws
-        for x in range(0, int(rp[0].centroid[0])):
+    keep = "upper"
+
+    if y_zero is not None:
+        # Use the physical baseline (y=0) instead of centroid to decide which
+        # side of the waveform to keep.
+        y0 = float(y_zero)
+        # Find all rows that contain part of the curve
+        c_rows = np.where(np.sum(top_curve_mask, axis=1))[0]
+        above = np.sum(c_rows < y0)
+        below = np.sum(c_rows > y0)
+
+        inverted = below > above  # majority of curve lies below baseline
+
+        if not inverted:
+            # Keep rows at or above the baseline (waveform above baseline)
+            for x in range(int(np.floor(y0)) + 1, top_curve_mask.shape[0]):
+                top_curve_mask[x, :] = 0
+            keep = "upper"
+        else:
+            # Keep rows at or below the baseline (waveform below baseline)
+            for x in range(0, int(np.ceil(y0))):
+                top_curve_mask[x, :] = 0
+            keep = "lower"
+    else:
+        # Fallback: original centroid-based logic
+        for x in range(int(rp[0].centroid[0]), top_curve_mask.shape[0]):
             top_curve_mask[x, :] = 0
 
-    top_curve_coords = np.array(list(zip(*np.nonzero(top_curve_mask))))
+        # If inverted, keep only below centroid -> "bottom half"
+        if check_inverted_curve(top_curve_mask, Ymax, Ymin):
+            top_curve_mask = mask - ws
+            for x in range(0, int(rp[0].centroid[0])):
+                top_curve_mask[x, :] = 0
+            keep = "lower"  # inverted means you want the bottom boundary
 
-    return refined_segmentation_mask, top_curve_mask, top_curve_coords
+    # --- Ray trace / first-hit per column (removes double lines) ---
+    top_curve_mask = keep_one_pixel_per_column(top_curve_mask, keep=keep)
+
+    top_curve_coords = np.column_stack(np.nonzero(top_curve_mask))
+
+    return top_curve_mask.astype(int), top_curve_coords
+
+
+def keep_one_pixel_per_column(mask: np.ndarray, keep: str = "upper") -> np.ndarray:
+    """
+    Keep at most one True pixel per column in a binary mask.
+
+    keep="upper": visually uppermost pixel (smallest row index).
+    keep="lower": visually lowermost pixel (largest row index).
+    """
+    m = (mask > 0)
+    out = np.zeros_like(m, dtype=bool)
+
+    rows, cols = np.nonzero(m)
+    if cols.size == 0:
+        return out
+
+    for c in np.unique(cols):
+        r = rows[cols == c]
+        out[(r.min() if keep == "upper" else r.max()), c] = True
+
+    return out
 
 
 def search_for_ticks(input_image_obj, side, left_dimensions, right_dimensions):
@@ -898,6 +993,491 @@ def search_for_labels(
     return ROIAX, number, positions, empty_to_fill
 
 
+def validate_axis_ticks(numbers, positions, side, spacing_tol=0.2):
+    """
+    Validate and (lightly) correct axis tick labels and their pixel coordinates.
+
+    - Requires at least two ticks, and matching lengths for values/positions.
+    - Ensures that, when ordered along the axis (by y pixel), numeric values are
+      monotonic (all increasing or all decreasing). If this fails, the inputs
+      are returned unchanged.
+    - Optionally checks that successive slopes (Δvalue / Δy) are roughly
+      consistent. If *exactly two consecutive* slopes are strong outliers, the
+      tick between them is treated as suspect and dropped from the returned
+      lists. More complex patterns only generate warnings.
+
+    The original inputs are never mutated. A cleaned copy is returned.
+
+    Args:
+        numbers (Iterable[float]): Tick values.
+        positions (Iterable[Sequence[float]]): Tick positions as [x, y].
+        side (str): "Left" or "Right" (used for logging).
+        spacing_tol (float): Relative tolerance for slope consistency.
+
+    Returns:
+        (clean_numbers, clean_positions): Lists of tick values and positions.
+    """
+    numbers = list(numbers)
+    positions = [list(p) for p in positions]
+
+    if len(numbers) < 2 or len(numbers) != len(positions):
+        logger.warning(
+            "Axis validation failed for %s side: insufficient or mismatched ticks "
+            "(%d values, %d positions).",
+            side,
+            len(numbers),
+            len(positions),
+        )
+        return numbers, positions
+
+    # positions are [x, y] in image coords; sort by y (row)
+    # Keep track of original indices so we can return cleaned subsets.
+    indexed = list(enumerate(zip(numbers, positions)))
+    indexed.sort(key=lambda t: float(t[1][1][1]))  # sort by y
+
+    idxs = [i for i, _ in indexed]
+    ordered_vals = [float(vp[0]) for _, vp in indexed]
+    ys = [float(vp[1][1]) for _, vp in indexed]
+
+    while True:
+        if len(ordered_vals) < 2:
+            logger.warning(
+                "Axis validation warning for %s side: fewer than two ticks after filtering: %s",
+                side,
+                ordered_vals,
+            )
+            # Return whatever cleaned subset survives in idxs (possibly empty),
+            # rather than the original unfiltered inputs.
+            clean_numbers = [numbers[i] for i in idxs]
+            clean_positions = [positions[i] for i in idxs]
+            return clean_numbers, clean_positions
+
+        # 1 - basic monotonicity check on values along the axis
+        inc = all(ordered_vals[i + 1] >= ordered_vals[i] for i in range(len(ordered_vals) - 1))  # increasing or flat
+        dec = all(ordered_vals[i + 1] <= ordered_vals[i] for i in range(len(ordered_vals) - 1))  # decreasing or flat
+
+
+        # 2) value-vs-position consistency: check that the per-pixel slope
+        #    (Δvalue / Δy) is roughly constant.
+        dv = [ordered_vals[i + 1] - ordered_vals[i] for i in range(len(ordered_vals) - 1)]
+        dy = [ys[i + 1] - ys[i] for i in range(len(ys) - 1)]
+
+        # Handle duplicate positions (dy_i == 0). These mean two or more ticks share
+        # exactly the same y-coordinate.
+        duplicate_indices = [i for i, d in enumerate(dy) if d == 0]
+        if duplicate_indices:
+            # Group consecutive duplicates into clusters that share the same y.
+            # Example: ys = [100, 120, 120, 120, 140]
+            # dy indices with 0 might be [1, 2] → cluster of ticks [1,2,3].
+            start = None
+            dup_clusters = []
+            for i in range(len(ys) - 1):
+                if ys[i + 1] == ys[i]:
+                    if start is None:
+                        start = i
+                else:
+                    if start is not None:
+                        dup_clusters.append((start, i + 1))  # inclusive start,end indices in ordered_vals
+                        start = None
+            if start is not None:
+                dup_clusters.append((start, len(ys) - 1))
+
+            # For each cluster of ticks at the same y:
+            # - If all values identical, drop all but one (true duplicates).
+            # - If values differ, drop the whole cluster (we can't know which is right).
+            to_drop = set()
+            for c_start, c_end in dup_clusters:
+                idx_range = list(range(c_start, c_end + 1))
+                vals_here = {ordered_vals[j] for j in idx_range}
+                if len(vals_here) == 1:
+                    # Pure duplicates: keep the last, drop the rest.
+                    for j in idx_range[:-1]:
+                        to_drop.add(j)
+                else:
+                    # Conflicting labels at same y: drop the entire cluster.
+                    logger.warning(
+                        "Axis validation for %s side: conflicting tick values %s at shared y=%s; "
+                        "dropping all ticks at this y.",
+                        side,
+                        [ordered_vals[j] for j in idx_range],
+                        ys[c_start],
+                    )
+                    for j in idx_range:
+                        to_drop.add(j)
+
+            if to_drop:
+                for j in sorted(to_drop, reverse=True):
+                    logger.warning(
+                        "Axis validation for %s side: removing tick value %s at index %d (duplicate-y cleanup).",
+                        side,
+                        ordered_vals[j],
+                        j,
+                    )
+                    ordered_vals.pop(j)
+                    ys.pop(j)
+                    idxs.pop(j)
+                # Re-run loop with cleaned data
+                continue
+
+        slopes = [
+            dv_i / dy_i for dv_i, dy_i in zip(dv, dy)
+            if dy_i != 0  # skip zero-height steps
+        ]
+
+        if len(slopes) < 2:
+            # Check if this is because all positions are duplicates (all dy_i == 0)
+            if len(slopes) == 0 and len(ordered_vals) >= 2:
+                # All tick positions have the same y-coordinate - axis is useless
+                logger.warning(
+                    "Axis validation for %s side: all tick positions have identical y-coordinates. "
+                    "This axis appears to have duplicate positions and is unusable. Returning empty lists.",
+                    side,
+                )
+                return [], []
+            # Otherwise, not enough slopes for consistency check, but data might still be valid
+            break
+
+        # Identify the dominant slope cluster by frequency, not by mean.
+        # Group slopes that are close to each other (within spacing_tol)
+        # and take the largest group as the expected slope cluster.
+        clusters = []  # list of (rep_slope, [indices])
+        for i, s in enumerate(slopes):
+            placed = False
+            for ci, (rep, idxs_c) in enumerate(clusters):
+                # Relative difference to cluster representative
+                if rep != 0 and abs(s - rep) / abs(rep) <= spacing_tol:
+                    # Merge into this cluster, update representative to simple mean
+                    idxs_c.append(i)
+                    clusters[ci] = (sum(slopes[j] for j in idxs_c) / len(idxs_c), idxs_c)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append((s, [i]))
+
+        if not clusters:
+            break
+
+        # Pick the cluster with the most members as the "good" cluster
+        best_rep, best_idxs = max(clusters, key=lambda c: len(c[1]))
+
+        # Any slope not in the dominant cluster is considered "bad"
+        bad_indices = [i for i in range(len(slopes)) if i not in best_idxs]
+
+        if not bad_indices:
+            # All slopes look reasonably consistent
+            break
+
+        # Edge case: exactly one bad slope at the start or end – treat the
+        # corresponding endpoint tick as suspect.
+        if len(bad_indices) == 1:
+            bi = bad_indices[0]
+            if bi == 0:
+                # First slope bad -> first tick is suspect
+                drop_idx = 0
+            elif bi == len(slopes) - 1:
+                # Last slope bad -> last tick is suspect
+                drop_idx = len(ordered_vals) - 1
+            else:
+                drop_idx = None
+
+            if drop_idx is not None:
+                logger.warning(
+                    "Axis validation for %s side: removing suspect endpoint tick value %s at index %d "
+                    "for validation purposes (slopes=%s, cluster_rep=%0.3f)",
+                    side,
+                    ordered_vals[drop_idx],
+                    drop_idx,
+                    slopes,
+                    best_rep,
+                )
+                ordered_vals.pop(drop_idx)
+                ys.pop(drop_idx)
+                idxs.pop(drop_idx)
+                continue
+
+        # If exactly two consecutive bad slopes, drop the interior tick between them
+        if len(bad_indices) == 2 and bad_indices[1] == bad_indices[0] + 1:
+            drop_idx = bad_indices[0] + 1  # index of the middle tick
+            logger.warning(
+                "Axis validation for %s side: removing suspect tick value %s at index %d "
+                "for validation purposes (slopes=%s, cluster_rep=%0.3f)",
+                side,
+                ordered_vals[drop_idx],
+                drop_idx,
+                slopes,
+                best_rep,
+            )
+            # Remove that tick from local copies and loop again
+            ordered_vals.pop(drop_idx)
+            ys.pop(drop_idx)
+            idxs.pop(drop_idx)
+            continue
+
+        # Special case: three bad slopes – one at an endpoint and two adjacent in the middle.
+        # In this scenario we:
+        #   - remove the tick between the two adjacent bad slopes, and
+        #   - remove the endpoint tick indicated by the endpoint bad slope.
+        if len(bad_indices) == 3:
+            last_slope_idx = len(slopes) - 1
+            has_start = 0 in bad_indices
+            has_end = last_slope_idx in bad_indices
+
+            # Find the interior adjacent pair (k, k+1)
+            interior_pair = None
+            for bi in bad_indices:
+                if bi != 0 and bi != last_slope_idx and (bi + 1) in bad_indices:
+                    interior_pair = (bi, bi + 1)
+                    break
+
+            if (has_start or has_end) and interior_pair is not None:
+                k, k1 = interior_pair
+                mid_tick = k + 1  # tick index between the two bad slopes
+
+                # Endpoint tick to drop: first or last tick
+                endpoint_tick = 0 if has_start else len(ordered_vals) - 1
+
+                # Drop in descending index order so indices remain valid
+                for drop_idx in sorted({mid_tick, endpoint_tick}, reverse=True):
+                    logger.warning(
+                        "Axis validation for %s side: removing suspect tick value %s at index %d "
+                        "(three-bad-slopes pattern, slopes=%s, cluster_rep=%0.3f)",
+                        side,
+                        ordered_vals[drop_idx],
+                        drop_idx,
+                        slopes,
+                        best_rep,
+                    )
+                    ordered_vals.pop(drop_idx)
+                    ys.pop(drop_idx)
+                    idxs.pop(drop_idx)
+                continue
+
+        # If we reach here with remaining bad slopes, we can't safely decide which
+        # tick(s) to drop without risking over-aggressive correction.
+        logger.warning(
+            "Axis validation warning for %s side: inconsistent value-per-pixel slopes "
+            "(cluster_rep=%0.3f, slopes=%s); unable to unambiguously identify bad ticks.",
+            side,
+            best_rep,
+            slopes,
+        )
+        break
+
+    # Reconstruct cleaned numbers/positions from surviving indices
+    clean_numbers = [numbers[i] for i in idxs]
+    clean_positions = [positions[i] for i in idxs]
+    return clean_numbers, clean_positions
+
+
+def validate_axis_pair(
+    left_numbers,
+    left_positions,
+    right_numbers,
+    right_positions,
+    y_tol_pixels: float = 5.0,
+):
+    """
+    Cross-check consistency between left and right axes.
+
+    For any tick value that appears on both sides, we expect the corresponding
+    y-coordinates to be approximately equal (within `y_tol_pixels`). If not,
+    a warning is logged.
+
+    This function does not mutate any inputs; it is purely diagnostic.
+
+    Args:
+        left_numbers (Iterable[float]): Tick values on the left axis.
+        left_positions (Iterable[Sequence[float]]): Left positions as [x, y].
+        right_numbers (Iterable[float]): Tick values on the right axis.
+        right_positions (Iterable[Sequence[float]]): Right positions as [x, y].
+        y_tol_pixels (float): Allowed absolute difference in y between matching
+                              tick values on the two sides.
+
+    Returns:
+        bool: True if all matching ticks are within tolerance, False otherwise.
+    """
+    left_numbers = list(left_numbers)
+    right_numbers = list(right_numbers)
+    left_positions = [list(p) for p in left_positions]
+    right_positions = [list(p) for p in right_positions]
+
+    # Build value -> list of y-coordinates maps for each side
+    left_map = {}
+    for v, p in zip(left_numbers, left_positions):
+        left_map.setdefault(float(v), []).append(float(p[1]))
+
+    right_map = {}
+    for v, p in zip(right_numbers, right_positions):
+        right_map.setdefault(float(v), []).append(float(p[1]))
+
+    common_vals = sorted(set(left_map.keys()) & set(right_map.keys()))
+    if not common_vals:
+        # Nothing to compare; treat as inconclusive but not a failure.
+        return True
+
+    ok = True
+    for v in common_vals:
+        # Compare mean y for this tick value on each side
+        y_left = sum(left_map[v]) / len(left_map[v])
+        y_right = sum(right_map[v]) / len(right_map[v])
+        if abs(y_left - y_right) > y_tol_pixels:
+            logger.warning(
+                "Axis pair validation warning: tick value %s has inconsistent y "
+                "between sides (left=%0.2f, right=%0.2f, tol=%0.2f).",
+                v,
+                y_left,
+                y_right,
+                y_tol_pixels,
+            )
+            ok = False
+
+    return ok
+
+
+def estimate_zero_line_y_axis(numbers, positions, eps: float = 1e-3):
+    """
+    Estimate the y-coordinate of the value 0 line for a single axis, based on
+    tick values and their positions.
+
+    Strategy:
+      1. If any tick has value exactly (or very close to) 0, return the mean
+         y of those ticks.
+      2. Otherwise, look for neighbouring ticks whose values straddle 0
+         (one negative, one positive) and linearly interpolate y at value 0.
+         If multiple candidates exist, choose the pair with smallest
+         |v_neg| + |v_pos|.
+
+    Args:
+        numbers (Iterable[float]): Tick values.
+        positions (Iterable[Sequence[float]]): Tick positions as [x, y].
+        eps (float): Tolerance for treating a tick value as zero.
+
+    Returns:
+        float or None: Estimated y-coordinate of the 0-line for this axis,
+                       or None if it cannot be estimated.
+    """
+    numbers = [float(v) for v in numbers]
+    positions = [list(p) for p in positions]
+    if len(numbers) != len(positions) or not numbers:
+        return None
+
+    # Sort by y (row) so we move along the axis consistently
+    vals = [(v, float(p[1])) for v, p in zip(numbers, positions)]
+    vals.sort(key=lambda t: t[1])
+    vs = [v for v, _ in vals]
+    ys = [y for _, y in vals]
+
+    # 1) Exact (or near) zero tick(s)
+    # If any tick is very close to value 0 (within eps), we treat its y-position
+    # as lying on the physical zero line. Multiple such ticks are averaged.
+    zero_ys = [y for v, y in zip(vs, ys) if abs(v) <= eps]
+    if zero_ys:
+        return sum(zero_ys) / len(zero_ys)
+
+    # 2) No explicit 0-tick: fit a straight line y = a * v + b through all
+    #    (value, y) pairs, and evaluate it at v = 0. This does *not* require
+    #    both positive and negative values: with at least two distinct tick
+    #    values we can still extrapolate the mapping down to 0.
+    if len(vs) < 2:
+        # Not enough distinct information to define a line
+        return None
+
+    try:
+        # np.polyfit returns coefficients [a, b] for y ≈ a*v + b
+        a, b = np.polyfit(vs, ys, 1)
+        # At v = 0 we have y0 = b
+        return float(b)
+    except Exception:
+        # In degenerate cases (e.g. numerical issues), give up gracefully
+        return None
+
+
+def estimate_zero_line_y(
+    left_numbers=None,
+    left_positions=None,
+    right_numbers=None,
+    right_positions=None,
+    y_tol_pixels: float = 5.0,
+):
+    """
+    Estimate a single global y-coordinate for the value 0 line, using one or
+    both axes if available.
+
+    - If both left and right estimates are available and within `y_tol_pixels`,
+      their average is returned.
+    - If both are available but differ more than `y_tol_pixels`, their average
+      is still returned, but a warning is logged.
+    - If only one side yields an estimate, that value is returned.
+    - If neither side yields an estimate, returns None.
+
+    Additionally, when one axis has very few ticks (<= 2) and the other has
+    more, the side with *more* ticks is trusted preferentially, because with
+    only two ticks there is only a single slope and no redundancy for
+    consistency checks.
+
+    Args:
+        left_numbers, left_positions: As for `estimate_zero_line_y_axis`.
+        right_numbers, right_positions: As for `estimate_zero_line_y_axis`.
+        y_tol_pixels (float): Tolerance for considering left/right y0 equal.
+
+    Returns:
+        float or None: Estimated y-coordinate of the 0-line, or None.
+    """
+    # Initialise estimates for left and right axes
+    yL = None
+    yR = None
+
+    # Track how many ticks each axis actually has, so we can prefer the
+    # side with more information if necessary.
+    nL = len(left_numbers) if left_numbers is not None else 0
+    nR = len(right_numbers) if right_numbers is not None else 0
+
+    # Minimum number of ticks considered reliable for zero-line estimation.
+    # With 2 or fewer ticks there is only a single slope and no redundancy.
+    MIN_RELIABLE_TICKS = 3
+
+    # Compute per-axis zero-line estimates when input is available.
+    if left_numbers is not None and left_positions is not None:
+        yL = estimate_zero_line_y_axis(left_numbers, left_positions)
+
+    if right_numbers is not None and right_positions is not None:
+        yR = estimate_zero_line_y_axis(right_numbers, right_positions)
+
+    # If neither side produced an estimate, cannot infer a global zero-line.
+    if yL is None and yR is None:
+        return None
+
+    # If only one side has an estimate, return it directly.
+    if yL is None:
+        return yR
+    if yR is None:
+        return yL
+
+    # At this point both sides produced an estimate. If one axis has very few
+    # ticks and the other has "enough", prefer the larger axis instead of
+    # averaging. For example, if the right axis only returned 2 labels while
+    # the left returned 3, trust the left-hand estimate.
+    if nL >= MIN_RELIABLE_TICKS and nR < MIN_RELIABLE_TICKS:
+        return yL
+    if nR >= MIN_RELIABLE_TICKS and nL < MIN_RELIABLE_TICKS:
+        return yR
+
+    # Otherwise both sides are comparable in terms of tick count. If they
+    # disagree by more than the allowed tolerance, log a warning but still
+    # use their average as a compromise.
+    if abs(yL - yR) > y_tol_pixels:
+        logger.warning(
+            "Zero-line y estimate disagrees between sides (left=%0.2f, right=%0.2f, tol=%0.2f); "
+            "using their average.",
+            yL,
+            yR,
+            y_tol_pixels,
+        )
+
+    # Return the mean of the two side estimates.
+    return 0.5 * (yL + yR)
+
+
 def plot_digitized_data(Rticks, Rlocs, Lticks, Llocs, top_curve_coords):
     """
     Digitize and plot the data.
@@ -932,6 +1512,22 @@ def plot_digitized_data(Rticks, Rlocs, Lticks, Llocs, top_curve_coords):
         the right axis, ensuring the digitization process can proceed. It 
         also inverts the waveform if the average flow rate is negative.
     """
+
+    # Handle empty axis data (e.g., from duplicate positions)
+    if not Lticks or not Rticks:
+        if not Lticks and not Rticks:
+            logger.error("Both axes are empty - cannot digitize")
+            return [], [], [0]
+        # If one axis is empty, we can still proceed with the other
+        if not Lticks:
+            logger.warning("Left axis is empty - using right axis only")
+            # Use right axis for both (not ideal but allows processing to continue)
+            Lticks = Rticks.copy()
+            Llocs = Rlocs.copy()
+        elif not Rticks:
+            logger.warning("Right axis is empty - using left axis only")
+            Rticks = Lticks.copy()
+            Rlocs = Llocs.copy()
 
     # We will have problems if the right axes only has 1 tick and that tick is equal to the minimum on the left axis
     if len(Rticks) == 1:
@@ -977,9 +1573,8 @@ def plot_digitized_data(Rticks, Rlocs, Lticks, Llocs, top_curve_coords):
     Y = [YminL, YmaxR]
 
     for i in range(0, len(b)):
-        if XminL + 20 <= b[i][1] <= XmaxR - 20:
-            X.append(b[i][1])
-            Y.append(b[i][0])
+        X.append(b[i][1])
+        Y.append(b[i][0])
 
     origin = [X[0], Y[0]]
     topRight = [X[1], Y[1]]
@@ -1008,6 +1603,161 @@ def plot_digitized_data(Rticks, Rlocs, Lticks, Llocs, top_curve_coords):
     plt.plot(Xplot, Yplot, "-")
     plt.xlabel("Arbitrary time scale")
     plt.ylabel("Flowrate (cm/s)")
+    return Xplot, Yplot, Ynought
+
+
+def plot_digitized_data_single_axis(Rticks, Rlocs, Lticks, Llocs, top_curve_coords):
+    """
+    Simplified digitization using a single vertical axis and a normalized X axis.
+
+    - Chooses one "best" vertical axis (Left or Right) for value calibration.
+      If both sides are present and broadly agree, uses the side with more ticks.
+      If only one side is usable, falls back to that side.
+    - Uses that axis to build a linear mapping from pixel y to physical value.
+    - Uses curve x-position (or index) to build an arbitrary normalized time axis [0, 1].
+
+    Args:
+        Rticks, Rlocs, Lticks, Llocs, top_curve_coords: as for ``plot_digitized_data``.
+
+    Returns:
+        Xplot, Yplot, Ynought: same semantics as ``plot_digitized_data``.
+    """
+
+    # Convert to lists defensively
+    Rticks = list(Rticks) if Rticks is not None else []
+    Rlocs = [list(p) for p in Rlocs] if Rlocs is not None else []
+    Lticks = list(Lticks) if Lticks is not None else []
+    Llocs = [list(p) for p in Llocs] if Llocs is not None else []
+
+    # If both sides are completely empty, we cannot digitize
+    if not Rticks and not Lticks:
+        logger.error("Digitization: both axes empty - cannot digitize waveform.")
+        return [], [], [0]
+
+    # Helper: decide which axis to use for calibration
+    def choose_axis():
+        has_left = len(Lticks) >= 2 and len(Lticks) == len(Llocs)
+        has_right = len(Rticks) >= 2 and len(Rticks) == len(Rlocs)
+
+        if not has_left and not has_right:
+            # Not enough information on either side
+            logger.error(
+                "Digitization: insufficient ticks on both axes "
+                "(Left: %d, Right: %d).",
+                len(Lticks),
+                len(Rticks),
+            )
+            return None, None
+
+        if has_left and has_right:
+            # Check rough agreement between sides
+            try:
+                agree = validate_axis_pair(Lticks, Llocs, Rticks, Rlocs)
+            except Exception:
+                traceback.print_exc()
+                agree = False
+
+            # Prefer the side with more ticks if they agree, otherwise still pick
+            # the denser side but log a warning.
+            if agree:
+                if len(Lticks) >= len(Rticks):
+                    return Lticks, Llocs
+                return Rticks, Rlocs
+            else:
+                logger.warning(
+                    "Digitization: left/right axes disagree; using the side with more ticks "
+                    "(Left: %d, Right: %d).",
+                    len(Lticks),
+                    len(Rticks),
+                )
+                if len(Lticks) >= len(Rticks):
+                    return Lticks, Llocs
+                return Rticks, Rlocs
+
+        # Only one side has usable data
+        if has_left:
+            logger.info("Digitization: using left axis only for calibration.")
+            return Lticks, Llocs
+        else:
+            logger.info("Digitization: using right axis only for calibration.")
+            return Rticks, Rlocs
+
+    axis_ticks, axis_locs = choose_axis()
+    if axis_ticks is None or axis_locs is None:
+        # Already logged
+        return [], [], [0]
+
+    # Build a simple linear mapping from pixel y to value using the chosen axis
+    # Axis locations are [x, y]; we care about y here.
+    try:
+        pairs = [(float(p[1]), float(v)) for v, p in zip(axis_ticks, axis_locs)]
+    except Exception:
+        traceback.print_exc()
+        logger.error("Digitization: failed to build (y, value) pairs from axis data.")
+        return [], [], [0]
+
+    # Sort by y (image coordinates)
+    pairs.sort(key=lambda t: t[0])
+    ys_axis = [t[0] for t in pairs]
+    vals_axis = [t[1] for t in pairs]
+
+    if len(ys_axis) < 2 or ys_axis[0] == ys_axis[-1]:
+        logger.error(
+            "Digitization: axis has insufficient vertical spread for calibration "
+            "(ys=%s).",
+            ys_axis,
+        )
+        return [], [], [0]
+
+    # End-point linear calibration: value = a * y + b
+    a = (vals_axis[-1] - vals_axis[0]) / (ys_axis[-1] - ys_axis[0])
+    b = vals_axis[0] - a * ys_axis[0]
+
+    # Process curve coordinates: one point per column, as in the original implementation
+    b_coords = top_curve_coords
+    if b_coords is None or len(b_coords) == 0:
+        logger.error("Digitization: top_curve_coords is empty - nothing to digitize.")
+        return [], [], [0]
+
+    # Sort by (x, y) and average rows per column
+    b_arr = [list(B) for B in b_coords]
+    # b_arr is [row, col]; we want [col, row] for grouping by x
+    b_swapped = [x[::-1] for x in b_arr]
+    df = pd.DataFrame(b_swapped).groupby(0, as_index=False)[1].mean().values.tolist()
+    # Back to [row, col]
+    b_clean = [x[::-1] for x in df]
+
+    # Build X (pixels) and Y (pixels) from the cleaned curve
+    X_pixels = [pt[1] for pt in b_clean]
+    Y_pixels = [pt[0] for pt in b_clean]
+
+    if len(X_pixels) < 2:
+        logger.error("Digitization: insufficient curve points after cleaning.")
+        return [], [], [0]
+
+    # Normalize X to [0, 1] as arbitrary time axis
+    Xmin_pix = min(X_pixels)
+    Xmax_pix = max(X_pixels)
+    if Xmax_pix == Xmin_pix:
+        Xplot = [0.0 for _ in X_pixels]
+    else:
+        Xplot = [(x - Xmin_pix) / (Xmax_pix - Xmin_pix) for x in X_pixels]
+
+    # Map pixel y to physical value using the axis calibration
+    Yplot = [a * y + b for y in Y_pixels]
+
+    # Invert waveform if mean is negative (same heuristic as original)
+    if np.mean(Yplot) < 0:
+        Yplot = [y * (-1) for y in Yplot]
+
+    # In this simplified scheme, y=0 in digitized space is just 0
+    Ynought = [0.0]
+
+    plt.figure(2)
+    plt.plot(Xplot, Yplot, "-")
+    plt.xlabel("Arbitrary time scale")
+    plt.ylabel("Flowrate (cm/s)")
+
     return Xplot, Yplot, Ynought
 
 
@@ -1710,15 +2460,15 @@ def text_from_greyscale(input_image_obj, COL):
                 if match:
                     value = float(match.group(1).replace(' ', ''))
                     unit = match.group(4) if match.group(4) else ""
-                    df = df._append(
-                        {"Line": i + 1, "Word": word, "Value": value, "Unit": unit},
+                    df = pd.concat(
+                        [df, pd.DataFrame([{"Line": i + 1, "Word": word, "Value": value, "Unit": unit}])],
                         ignore_index=True,
                     )
                     target_words.remove(word)
                 else:
                     # logger.warning("couldn't find numeric data for line.")
-                    df = df._append(
-                        {"Line": i + 1, "Word": word, "Value": 0, "Unit": 0},
+                    df = pd.concat(
+                        [df, pd.DataFrame([{"Line": i + 1, "Word": word, "Value": 0, "Unit": 0}])],
                         ignore_index=True,
                     )
                     target_words.remove(word)
@@ -1749,15 +2499,15 @@ def text_from_greyscale(input_image_obj, COL):
                     if match:
                         value = float(match.group(1))
                         unit = match.group(2) if match.group(2) else ""
-                        df = df._append(
-                            {"Line": i + 1, "Word": word, "Value": value, "Unit": unit},
+                        df = pd.concat(
+                            [df, pd.DataFrame([{"Line": i + 1, "Word": word, "Value": value, "Unit": unit}])],
                             ignore_index=True,
                         )
                         target_words.remove(word)
                     else:
                         # logger.warning("couldn't find numeric data for line.")
-                        df = df._append(
-                            {"Line": i + 1, "Word": word, "Value": 0, "Unit": 0},
+                        df = pd.concat(
+                            [df, pd.DataFrame([{"Line": i + 1, "Word": word, "Value": 0, "Unit": 0}])],
                             ignore_index=True,
                         )
                         target_words.remove(word)
@@ -1789,8 +2539,8 @@ def text_from_greyscale(input_image_obj, COL):
                 if match:
                     value = float(match.group(1).replace(' ', ''))
                     unit = match.group(4) if match.group(4) else ""
-                    df = df._append(
-                        {"Line": i + 1, "Word": closest_word, "Value": value, "Unit": unit},
+                    df = pd.concat(
+                        [df, pd.DataFrame([{"Line": i + 1, "Word": closest_word, "Value": value, "Unit": unit}])],
                         ignore_index=True,
                     )
                     target_words.remove(closest_word)
@@ -1890,13 +2640,13 @@ def text_from_greyscale(input_image_obj, COL):
                 if match:
                     value = float(match.group(1).replace(' ', ''))
                     unit = match.group(4) if match.group(4) else ""
-                    df = df._append(
-                        {"Line": i + 1, "Word": target_words[j], "Value": value, "Unit": unit},
+                    df = pd.concat(
+                        [df, pd.DataFrame([{"Line": i + 1, "Word": target_words[j], "Value": value, "Unit": unit}])],
                         ignore_index=True,
                     )
                 else:
-                    df = df._append(
-                        {"Line": i + 1, "Word": target_words[j], "Value": 0, "Unit": 0},
+                    df = pd.concat(
+                        [df, pd.DataFrame([{"Line": i + 1, "Word": target_words[j], "Value": 0, "Unit": 0}])],
                         ignore_index=True,
                     )
                 matched_lines.add(i)
@@ -1932,6 +2682,11 @@ def text_from_greyscale(input_image_obj, COL):
             df = metric_check(df)  # for left, right, and umbilical
     except:
         print("metric check failed")
+
+    # Enforce positive heart-rate values: OCR occasionally hallucinates a leading '-'
+    if not df.empty and 'Value' in df.columns and 'Word' in df.columns:
+        hr_mask = df['Word'].str.contains('HR', na=False) & df['Value'].notna()
+        df.loc[hr_mask, 'Value'] = df.loc[hr_mask, 'Value'].abs()
 
     return Fail, df
 
@@ -2003,11 +2758,11 @@ def metric_check(df):
         # Add Missing Rows
         for target in missing_targets:
             new_row = {"Word": target, "Value": 0, "Unit": ""}
-            df_in = df_in._append(new_row, ignore_index=True)
+            df_in = pd.concat([df_in, pd.DataFrame([new_row])], ignore_index=True)
 
         return df_in
 
-    df = add_missing_rows(df)
+    #df = add_missing_rows(df)
 
     def check_TAmax_value(value_in, df_in):  # Decimal can be misread, so common sense check.
 
@@ -2352,7 +3107,7 @@ def metric_check_dv(df):
         # Add Missing Rows
         for target in missing_targets:
             new_row = {"Word": target, "Value": 0, "Unit": ""}
-            df = df._append(new_row, ignore_index=True)
+            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
         return df
 
