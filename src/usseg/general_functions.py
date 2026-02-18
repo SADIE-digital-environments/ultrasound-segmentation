@@ -135,8 +135,8 @@ def initial_segmentation(input_image_obj):
     nonzero_pixels = (pixel_sum > 0).astype(bool)  # Change type
     # Some processing to refine the target area
     segmentation_mask = morphology.remove_small_objects(
-        nonzero_pixels, 200, connectivity=2
-    )  # Remover small objects (noise)
+        nonzero_pixels, max_size=199, connectivity=2
+    )  # Remove small objects (noise)
     segmentation_mask = morphology.remove_small_holes(segmentation_mask, 200)  # Fill in any small holes
     segmentation_mask = morphology.binary_erosion(
         segmentation_mask
@@ -309,8 +309,8 @@ def refine_waveform_segmentation(input_image_obj, Xmin, Xmax, Ymin, Ymax):
     nonzero_pixels = (binary_image > 0).astype(bool)  # Change type
     # Some processing to refine the target area
     refined_segmentation_mask = morphology.remove_small_objects(
-        nonzero_pixels, 200, connectivity=2
-    )  # Remover small objects (noise)
+        nonzero_pixels, max_size=199, connectivity=2
+    )  # Remove small objects (noise)
     refined_segmentation_mask = morphology.remove_small_holes(
         refined_segmentation_mask, 200
     )  # Fill in any small holes
@@ -341,10 +341,11 @@ def refine_waveform_segmentation(input_image_obj, Xmin, Xmax, Ymin, Ymax):
     # get size of largest cluster
     sizes = sorted([i.area for i in rp])
     refined_segmentation_mask = refined_segmentation_mask.astype(bool)
-    # remove everything smaller than largest
+    # remove everything smaller than second-largest area + 10
     try:
+        threshold = sizes[-2] + 10
         refined_segmentation_mask = morphology.remove_small_objects(
-            refined_segmentation_mask, min_size=sizes[-2] + 10
+            refined_segmentation_mask, max_size=threshold - 1
         )
     except Exception:
         pass
@@ -494,7 +495,7 @@ def search_for_ticks(input_image_obj, side, left_dimensions, right_dimensions):
     binary_image = BinaryNP
     pixel_sum = binary_image  # .sum(-1)  # sum over color (last) axis
     nonzero_pixels = (pixel_sum > 0).astype(bool)
-    W = morphology.remove_small_objects(nonzero_pixels, 20, connectivity=2)
+    W = morphology.remove_small_objects(nonzero_pixels, max_size=19, connectivity=2)
     W = W.astype(float)
 
     im = input_image_obj
