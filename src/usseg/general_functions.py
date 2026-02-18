@@ -2530,17 +2530,11 @@ def text_from_greyscale(input_image_obj, COL):
                     if match:
                         value = float(match.group(1))
                         unit = match.group(2) if match.group(2) else ""
-                        df = pd.concat(
-                            [df, pd.DataFrame([{"Line": i + 1, "Word": word, "Value": value, "Unit": unit}])],
-                            ignore_index=True,
-                        )
+                        df.loc[len(df)] = {"Line": i + 1, "Word": word, "Value": value, "Unit": unit}
                         target_words.remove(word)
                     else:
                         # logger.warning("couldn't find numeric data for line.")
-                        df = pd.concat(
-                            [df, pd.DataFrame([{"Line": i + 1, "Word": word, "Value": 0, "Unit": 0}])],
-                            ignore_index=True,
-                        )
+                        df.loc[len(df)] = {"Line": i + 1, "Word": word, "Value": 0, "Unit": 0}
                         target_words.remove(word)
                     matched_lines.add(i)
                     break  # Exit the inner loop once a match is found
@@ -2570,10 +2564,7 @@ def text_from_greyscale(input_image_obj, COL):
                 if match:
                     value = float(match.group(1).replace(' ', ''))
                     unit = match.group(4) if match.group(4) else ""
-                    df = pd.concat(
-                        [df, pd.DataFrame([{"Line": i + 1, "Word": closest_word, "Value": value, "Unit": unit}])],
-                        ignore_index=True,
-                    )
+                    df.loc[len(df)] = {"Line": i + 1, "Word": closest_word, "Value": value, "Unit": unit}
                     target_words.remove(closest_word)
                 matched_lines.add(i)
 
@@ -2671,15 +2662,9 @@ def text_from_greyscale(input_image_obj, COL):
                 if match:
                     value = float(match.group(1).replace(' ', ''))
                     unit = match.group(4) if match.group(4) else ""
-                    df = pd.concat(
-                        [df, pd.DataFrame([{"Line": i + 1, "Word": target_words[j], "Value": value, "Unit": unit}])],
-                        ignore_index=True,
-                    )
+                    df.loc[len(df)] = {"Line": i + 1, "Word": target_words[j], "Value": value, "Unit": unit}
                 else:
-                    df = pd.concat(
-                        [df, pd.DataFrame([{"Line": i + 1, "Word": target_words[j], "Value": 0, "Unit": 0}])],
-                        ignore_index=True,
-                    )
+                    df.loc[len(df)] = {"Line": i + 1, "Word": target_words[j], "Value": 0, "Unit": 0}
                 matched_lines.add(i)
 
                 # Remove the matched line from further consideration
@@ -2788,8 +2773,7 @@ def metric_check(df):
 
         # Add Missing Rows
         for target in missing_targets:
-            new_row = {"Word": target, "Value": 0, "Unit": ""}
-            df_in = pd.concat([df_in, pd.DataFrame([new_row])], ignore_index=True)
+            df_in.loc[len(df_in)] = {"Word": target, "Value": 0, "Unit": ""}
 
         return df_in
 
@@ -3137,8 +3121,7 @@ def metric_check_dv(df):
 
         # Add Missing Rows
         for target in missing_targets:
-            new_row = {"Word": target, "Value": 0, "Unit": ""}
-            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            df.loc[len(df)] = {"Word": target, "Value": 0, "Unit": ""}
 
         return df
 
