@@ -140,9 +140,7 @@ def initial_segmentation(input_image_obj):
     segmentation_mask = morphology.remove_small_holes(segmentation_mask, max_size=199)  # Fill in any small holes
     segmentation_mask = morphology.erosion(segmentation_mask)  # Erode the remaining binary, this can remove any ticks that may be joined to the main body
     segmentation_mask = morphology.erosion(segmentation_mask)  # Same as above - combine to one line if possible
-    segmentation_mask = morphology.binary_dilation(
-        segmentation_mask
-    )  # Dilate to try and recover some of the collateral loss through erosion
+    segmentation_mask = morphology.dilation(segmentation_mask)  # Dilate to try and recover some of the collateral loss through erosion
     segmentation_mask = segmentation_mask.astype(float)  # Change type
 
     contours = find_contours(segmentation_mask)  # contours of each object withing segmentation_mask
@@ -312,12 +310,9 @@ def refine_waveform_segmentation(input_image_obj, Xmin, Xmax, Ymin, Ymax):
     refined_segmentation_mask = morphology.remove_small_holes(refined_segmentation_mask, max_size=199)  # Fill in any small holes
     refined_segmentation_mask = morphology.erosion(refined_segmentation_mask)  # Erode the remaining binary, this can remove any ticks that may be joined to the main body
     refined_segmentation_mask = morphology.erosion(refined_segmentation_mask)  # Same as above - combine to one line if possible
-    refined_segmentation_mask = morphology.binary_dilation(
-        refined_segmentation_mask
-    )  # Dilate to try and recover some of the collateral loss through erosion
-    refined_segmentation_mask = refined_segmentation_mask.astype(float)  # Change type
+    refined_segmentation_mask = morphology.dilation(refined_segmentation_mask)  # Dilate to try and recover some of the collateral loss through erosion
 
-    refined_segmentation_mask = morphology.binary_dilation(refined_segmentation_mask)
+    refined_segmentation_mask = morphology.dilation(refined_segmentation_mask)
     refined_segmentation_mask = morphology.remove_small_holes(refined_segmentation_mask, max_size=999)
     refined_segmentation_mask = morphology.closing(refined_segmentation_mask)
     refined_segmentation_mask = refined_segmentation_mask.astype(int)
