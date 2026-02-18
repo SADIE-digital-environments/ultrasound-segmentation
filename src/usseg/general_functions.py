@@ -199,7 +199,7 @@ def define_end_rois(segmentation_mask, Xmin, Xmax, Ymin, Ymax):
     Xmin_L = 0  # Xmin - 50
     Xmax_L = Xmin - 1
     if (Ymin - 125) > 0:
-        Ymin_L = Ymin - 25
+        Ymin_L = Ymin - 75
     else:
         Ymin_L = 1
     Ymax_L = Ylim
@@ -208,7 +208,7 @@ def define_end_rois(segmentation_mask, Xmin, Xmax, Ymin, Ymax):
     Xmin_R = Xmax
     Xmax_R = Xlim  # Xmax + 50
     if (Ymin - 125) > 0:
-        Ymin_R = Ymin - 25
+        Ymin_R = Ymin - 75
     else:
         Ymin_R = 1
 
