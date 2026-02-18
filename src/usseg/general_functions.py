@@ -137,7 +137,7 @@ def initial_segmentation(input_image_obj):
     segmentation_mask = morphology.remove_small_objects(
         nonzero_pixels, max_size=199, connectivity=2
     )  # Remove small objects (noise)
-    segmentation_mask = morphology.remove_small_holes(segmentation_mask, 200)  # Fill in any small holes
+    segmentation_mask = morphology.remove_small_holes(segmentation_mask, max_size=199)  # Fill in any small holes
     segmentation_mask = morphology.binary_erosion(
         segmentation_mask
     )  # Erode the remaining binary, this can remove any ticks that may be joined to the main body
@@ -311,9 +311,7 @@ def refine_waveform_segmentation(input_image_obj, Xmin, Xmax, Ymin, Ymax):
     refined_segmentation_mask = morphology.remove_small_objects(
         nonzero_pixels, max_size=199, connectivity=2
     )  # Remove small objects (noise)
-    refined_segmentation_mask = morphology.remove_small_holes(
-        refined_segmentation_mask, 200
-    )  # Fill in any small holes
+    refined_segmentation_mask = morphology.remove_small_holes(refined_segmentation_mask, max_size=199)  # Fill in any small holes
     refined_segmentation_mask = morphology.binary_erosion(
         refined_segmentation_mask
     )  # Erode the remaining binary, this can remove any ticks that may be joined to the main body
@@ -326,9 +324,7 @@ def refine_waveform_segmentation(input_image_obj, Xmin, Xmax, Ymin, Ymax):
     refined_segmentation_mask = refined_segmentation_mask.astype(float)  # Change type
 
     refined_segmentation_mask = morphology.binary_dilation(refined_segmentation_mask)
-    refined_segmentation_mask = morphology.remove_small_holes(
-        refined_segmentation_mask, 1000
-    )
+    refined_segmentation_mask = morphology.remove_small_holes(refined_segmentation_mask, max_size=999)
     refined_segmentation_mask = morphology.closing(refined_segmentation_mask)
     refined_segmentation_mask = refined_segmentation_mask.astype(int)
     refined_segmentation_mask = scipy.signal.medfilt(refined_segmentation_mask, 3)
