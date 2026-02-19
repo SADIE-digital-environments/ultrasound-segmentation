@@ -93,6 +93,12 @@ def segment(filenames=None, output_dir=None, pickle_path=None):
         image_name = os.path.basename(input_image_filename)
         print(input_image_filename)
 
+        # Classify file type for downstream handling (image vs DICOM)
+        ext = os.path.splitext(input_image_filename)[1].lower()
+        us_dicom = ext in (".dcm", ".dicom")
+        # is_image: jpeg, png, or other common image formats
+        us_image = ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp")
+
         try:  # Try text extraction
             colRGBA = Image.open(input_image_filename)  # These images are in RGBA form
             # colRGBA = General_functions.upscale_to_fixed_longest_edge(colRGBA)  # upscale to longest edge

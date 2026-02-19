@@ -23,6 +23,7 @@ import statistics
 import scipy.linalg
 from sklearn.cluster import DBSCAN
 import pandas as pd
+import pydicom
 import pytesseract
 from pytesseract import Output
 
