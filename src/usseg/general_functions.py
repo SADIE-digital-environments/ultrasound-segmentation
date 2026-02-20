@@ -2010,6 +2010,81 @@ def plot_digitized_data_dicom(dicom_metadata, top_curve_coords=None):
     return Xplot, Yplot, Ynought
 
 
+def waveform_metrics_from_digitized(Xplot, Yplot):
+    """
+    Compute waveform metrics (PS, ED, S/D, RI, TAmax, PI) from digitized x,y data.
+    Used for DICOM where there is no text-extracted df; returns a DataFrame with
+    the same metric names and structure so downstream (Text_data, export) can use it.
+
+    Args:
+        Xplot (list of float): X coordinates (time or physical axis).
+        Yplot (list of float): Y coordinates (e.g. velocity).
+
+    Returns:
+        pandas.DataFrame: Columns Line, Word, Value, Unit, Digitized Value.
+            One row per metric: PS, ED, S/D, RI, TA (TAmax), PI. Value and Digitized Value
+            are set to the computed value; Unit is empty.
+    """
+    columns = ["Line", "Word", "Value", "Unit", "Digitized Value"]
+    empty_df = pd.DataFrame(columns=columns)
+
+    if Xplot is None or Yplot is None or len(Xplot) == 0 or len(Yplot) == 0 or len(Xplot) != len(Yplot):
+        return empty_df
+
+    y = np.array(Yplot, dtype=float)
+    x = np.array(Xplot, dtype=float)
+    if len(y) < 3:
+        return empty_df
+
+    try:
+        peaks, _ = find_peaks(y)
+        troughs, _ = find_peaks(-y)
+        if len(troughs) == 0:
+            trough_widths = np.array([0.0])
+            mean_widths_troughs = 0.0
+        else:
+            trough_widths, _, _, _ = peak_widths(-y, troughs)
+            mean_widths_troughs = float(statistics.mean(trough_widths))
+        valid_troughs = [troughs[i] for i in range(len(troughs)) if trough_widths[i] > (mean_widths_troughs / 2)]
+        troughs = valid_troughs if valid_troughs else troughs
+
+        if len(peaks) == 0:
+            return empty_df
+        results_half = peak_widths(y, peaks)
+        widths_of_peaks = results_half[0]
+        mean_widths_peaks = float(statistics.mean(widths_of_peaks))
+        mean_peak_y = float(statistics.mean(y[peaks]))
+        valid_peaks = [
+            peaks[i] for i in range(len(peaks))
+            if widths_of_peaks[i] > (mean_widths_peaks / 2) and y[peaks[i]] > (mean_peak_y * 0.8)
+        ]
+        peaks = valid_peaks if valid_peaks else peaks
+
+        if len(peaks) < 1 or len(troughs) < 1:
+            return empty_df
+
+        PS = float(statistics.mean(y[peaks]))
+        ED = float(statistics.mean(y[troughs]))
+        if ED == 0:
+            ED = np.finfo(float).eps
+        SoverD = PS / ED
+        RI = (PS - ED) / PS if PS != 0 else 0.0
+        TAmax = (PS + 2 * ED) / 3.0
+        mean_y = float(statistics.mean(y))
+        PI = (PS - ED) / mean_y if mean_y != 0 else 0.0
+
+        words = ["PS", "ED", "S/D", "RI", "TA", "PI"]
+        values = [round(PS, 2), round(ED, 2), round(SoverD, 2), round(RI, 2), round(TAmax, 2), round(PI, 2)]
+        rows = [
+            {"Line": i + 1, "Word": w, "Value": v, "Unit": "", "Digitized Value": v}
+            for i, (w, v) in enumerate(zip(words, values))
+        ]
+        return pd.DataFrame(rows, columns=columns)
+    except Exception:
+        logger.warning("waveform_metrics_from_digitized failed", exc_info=True)
+        return empty_df
+
+
 def plot_correction(Xplot, Yplot, df):
     """
     Adjusts and corrects the digitized waveform data using extracted text data, identifies

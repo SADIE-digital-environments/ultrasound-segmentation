@@ -367,13 +367,21 @@ def segment(filenames=None, output_dir=None, pickle_path=None):
             else:
                 Annotated_scans.append(None)
 
-            try:
-                df = general_functions.plot_correction(Xplot, Yplot, df)
+            # Metrics/correction: images use plot_correction (text df + digitized); DICOM uses waveform metrics only.
+            if us_image:
+                try:
+                    df = general_functions.plot_correction(Xplot, Yplot, df)
+                    Text_data.append(df)
+                except Exception:
+                    traceback.print_exc()
+                    logger.error("Failed correction")
+                    continue
+            elif us_dicom:
+                df = general_functions.waveform_metrics_from_digitized(Xplot, Yplot)
                 Text_data.append(df)
-            except Exception:
-                traceback.print_exc()
-                logger.error("Failed correction")
-                continue
+            else:
+                Text_data.append(None)
+
             Digitized_path = output_dir + image_name.partition(".")[0] + "_Digitized.png"
             plt.figure(2)
             plt.savefig(Digitized_path, dpi=900, bbox_inches="tight", pad_inches=0)
