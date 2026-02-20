@@ -328,32 +328,44 @@ def segment(filenames=None, output_dir=None, pickle_path=None):
             else:
                 Xplot, Yplot, Ynought = [], [], []
 
-            # Ensure axis masks are always defined. If either side failed axis
-            # detection, fall back to an empty mask so that annotation still
-            # runs without raising NameError / index errors.
-            if ROIL is None:
-                ROIL = np.zeros_like(refined_segmentation_mask, dtype=np.uint8)
-            if ROIR is None:
-                ROIR = np.zeros_like(refined_segmentation_mask, dtype=np.uint8)
+            # Annotation: image path uses axis masks and full annotate(), DICOM uses annotate_dicom() only.
+            if us_image:
+                # Ensure axis masks are always defined. If either side failed axis
+                # detection, fall back to an empty mask so that annotation still
+                # runs without raising NameError / index errors.
+                if ROIL is None:
+                    ROIL = np.zeros_like(refined_segmentation_mask, dtype=np.uint8)
+                if ROIR is None:
+                    ROIR = np.zeros_like(refined_segmentation_mask, dtype=np.uint8)
+                col = general_functions.annotate(
+                    input_image_obj=colRGBA,
+                    refined_segmentation_mask=refined_segmentation_mask,
+                    Left_dimensions=Left_dimensions,
+                    Right_dimensions=Right_dimensions,
+                    Waveform_dimensions=Waveform_dimensions,
+                    Left_axis=ROIL,
+                    Right_axis=ROIR,
+                )
+            elif us_dicom:
+                col = general_functions.annotate_dicom(
+                    input_image_obj=PIL_image,
+                    refined_segmentation_mask=refined_segmentation_mask,
+                    dicom_metadata=dicom_metadata,
+                )
+            else:
+                col = None
 
-            col = general_functions.annotate(
-                input_image_obj=colRGBA,
-                refined_segmentation_mask=refined_segmentation_mask,
-                Left_dimensions=Left_dimensions,
-                Right_dimensions=Right_dimensions,
-                Waveform_dimensions=Waveform_dimensions,
-                Left_axis=ROIL,
-                Right_axis=ROIR,
-            )
-            
             Annotated_path = output_dir + image_name.partition(".")[0] + "_Annotated.png"
-            fig1, ax1 = plt.subplots(1)
-            ax1.imshow(col)
-            ax1.set_xticks([])
-            ax1.set_yticks([])
-            ax1.tick_params(axis="both", which="both", length=0)
-            fig1.savefig(Annotated_path, dpi=900, bbox_inches="tight", pad_inches=0)
-            Annotated_scans.append(Annotated_path)
+            if col is not None:
+                fig1, ax1 = plt.subplots(1)
+                ax1.imshow(col)
+                ax1.set_xticks([])
+                ax1.set_yticks([])
+                ax1.tick_params(axis="both", which="both", length=0)
+                fig1.savefig(Annotated_path, dpi=900, bbox_inches="tight", pad_inches=0)
+                Annotated_scans.append(Annotated_path)
+            else:
+                Annotated_scans.append(None)
 
             try:
                 df = general_functions.plot_correction(Xplot, Yplot, df)

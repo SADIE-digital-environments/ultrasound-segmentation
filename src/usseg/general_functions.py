@@ -2313,6 +2313,55 @@ def annotate(
     return img_RGB
 
 
+def annotate_dicom(input_image_obj, refined_segmentation_mask, dicom_metadata):
+    """
+    DICOM-only annotation: overlay waveform segmentation and waveform ROI box
+    on the Doppler image. No left/right axis ROIs or tick masks (DICOM has
+    physical axes from metadata). Returns the annotated image for saving.
+
+    Args:
+        input_image_obj (PIL.Image.Image): Doppler image (RGB or L); converted to RGBA internally.
+        refined_segmentation_mask (numpy.ndarray): Segmentation mask (1=waveform, same shape as image).
+        dicom_metadata (dict): Must contain RegionLocationMinX0, RegionLocationMaxX1,
+            RegionLocationMinY0, RegionLocationMaxY1 for the waveform box.
+
+    Returns:
+        PIL.Image.Image: Annotated image (RGBA) with waveform in red, ROI outline in green.
+    """
+    # Ensure we have a copy and RGBA so we can write (r,g,b,a) without errors
+    if input_image_obj.mode != "RGBA":
+        img = input_image_obj.convert("RGBA")
+    else:
+        img = input_image_obj.copy()
+
+    Xmin = int(dicom_metadata.get("RegionLocationMinX0", 0))
+    Xmax = int(dicom_metadata.get("RegionLocationMaxX1", 0))
+    Ymin = int(dicom_metadata.get("RegionLocationMinY0", 0))
+    Ymax = int(dicom_metadata.get("RegionLocationMaxY1", 0))
+
+    # Work on a copy of the mask so we don't mutate the caller's array
+    mask = np.asarray(refined_segmentation_mask, dtype=np.uint8).copy()
+    h, w = mask.shape
+
+    # Waveform ROI outline only (no left/right boxes)
+    r = [Xmin, Xmax, Xmax, Xmin, Xmin]
+    c = [Ymax, Ymax, Ymin, Ymin, Ymax]
+    rr, cc = polygon_perimeter(c, r, shape=mask.shape)
+    mask[rr, cc] = 2
+
+    pixel_data = img.load()
+    for y in range(img.size[1]):
+        for x in range(img.size[0]):
+            if y >= h or x >= w:
+                continue
+            if mask[y, x] == 1:
+                pixel_data[x, y] = (255, pixel_data[x, y][1], pixel_data[x, y][2], 250)
+            elif mask[y, x] == 2:
+                pixel_data[x, y] = (1, 255, 1, 255)
+            # else: leave pixel unchanged
+    return img
+
+
 def colour_extract(input_image_obj, TargetRGB, cyl_length, cyl_radius):
     """Extract target colours from image.
     
