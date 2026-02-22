@@ -21,9 +21,12 @@ To segment a single ultrasound image, you can use the following code:
 """
 # Python imports
 import logging
+import os
+from PIL import Image
 
 # Module imports
 import matplotlib.pyplot as plt
+import cv2
 
 # Local imports
 from usseg import general_functions
@@ -31,17 +34,56 @@ from usseg import general_functions
 logger = logging.getLogger(__file__)
 
 
-def data_from_image(pil_img, cv2_img):
+def data_from_image(pil_img=None, cv2_img=None, image_path=None):
     """Extract segmentation and textual data from an image.
+
+    Transitional API (temporary):
+        This function is migrating from accepting pre-loaded images
+        (pil_img, cv2_img) to accepting an image file path instead.
+
+        Old usage (still supported temporarily):
+            data_from_image(PIL_image, cv2_image)
+
+        New usage (preferred):
+            data_from_image(image_path="path/to/image")
+
+        Legacy arguments will be removed in a future update once
+        dependent codes have migrated.
 
     Args:
         pil_img (Pillow Image object) : The image in Pillow format.
         cv2_img (cv2 Image object) : The image in cv2 format.
 
+        image_path (str, optional) : Path to the image file. Transitional option.
+            If provided, this function will judge file type and load pil_img and cv2_img internally.
+
     Returns:
         df (pandas dataframe) : Dataframe of extracted text.
         XYdata (list) : X and Y coordinates of the extracted segmentation.
     """
+
+    # Guard invalid input combinations
+    if image_path is not None and (pil_img is not None or cv2_img is not None):
+        raise ValueError(
+            "Provide either image_path OR (pil_img AND cv2_img), not both."
+        )
+
+
+    if image_path is not None:
+        # Classify file type for downstream handling (image vs DICOM)
+        ext = os.path.splitext(image_path)[1].lower()
+        us_dicom = ext in (".dcm", ".dicom")
+        # is_image: jpeg, png, or other common image formats
+        us_image = ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp")
+        if us_image: #Load image if image path
+            pil_img = Image.open(image_path)
+            cv2_img = cv2.imread(image_path)
+        elif us_dicom: #Load DICOM if image path is a DICOM file
+            dicom_metadata = general_functions.extract_dicom_metadata(image_path)
+            PIL_image, cv2_img = general_functions.extract_doppler_from_dicom(image_path)
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
+
     # Extracts yellow text from image
     # PIL_img , cv2_img = General_functions.upscale_both_images(PIL_img,cv2_img)
     PIL_image_RGB = pil_img.convert("RGB")  # We need RGB, so convert here. with PIL
