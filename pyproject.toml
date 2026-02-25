@@ -21,7 +21,7 @@ dependencies = [
     "pydicom",
     "pytesseract",
     "scipy",
-    "scikit-image",
+    "scikit-image>=0.26.0",
     "scikit-learn",
     "toml",
 ]
